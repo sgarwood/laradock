@@ -1,0 +1,149 @@
+version: '3'
+
+networks:
+  frontend:
+    driver: ${NETWORKS_DRIVER}
+  backend:
+    driver: ${NETWORKS_DRIVER}
+
+volumes:
+  postgres:
+    driver: ${VOLUMES_DRIVER}
+  redis:
+    driver: ${VOLUMES_DRIVER}
+services:
+
+  nuxt:
+    build: ../nuxt/app
+    volumes:
+      - ${NUXT_CODE_PATH_HOST}:/app
+    ports:
+      - "3000:3000"
+    expose:
+      - "3000"
+    command:
+      "npm run start"
+    networks:
+      - frontend
+  ### PHP-FPM ##############################################
+  php-fpm:
+    build:
+      context: ./php-fpm
+      args:
+        - LARADOCK_PHP_VERSION=${PHP_VERSION}
+        - INSTALL_PHPREDIS=${PHP_FPM_INSTALL_PHPREDIS}
+        - INSTALL_MEMCACHED=${PHP_FPM_INSTALL_MEMCACHED}
+        - INSTALL_PGSQL=${PHP_FPM_INSTALL_PGSQL}
+    volumes:
+      - ./php-fpm/php${PHP_VERSION}.ini:/usr/local/etc/php/php.ini
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+    expose:
+      - "9000"
+    networks:
+      - backend
+  ### PHP Worker ############################################
+  php-worker:
+    build:
+      context: ./php-worker
+      args:
+        - PHP_VERSION=${PHP_VERSION}
+        - INSTALL_PGSQL=${PHP_WORKER_INSTALL_PGSQL}
+        - INSTALL_BCMATH=${PHP_WORKER_INSTALL_BCMATH}
+        - INSTALL_PHALCON=${PHP_WORKER_INSTALL_PHALCON}
+        - INSTALL_SOAP=${PHP_WORKER_INSTALL_SOAP}
+        - INSTALL_ZIP_ARCHIVE=${PHP_WORKER_INSTALL_ZIP_ARCHIVE}
+        - INSTALL_AMQP=${PHP_WORKER_INSTALL_AMQP}
+        - INSTALL_GHOSTSCRIPT=${PHP_WORKER_INSTALL_GHOSTSCRIPT}
+        - PUID=${PHP_WORKER_PUID}
+        - PGID=${PHP_WORKER_PGID}
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+      - ./php-worker/supervisord.d:/etc/supervisord.d
+    networks:
+      - backend
+  ### NGINX Server #########################################
+  nginx:
+    build:
+      context: ./nginx
+      args:
+        - PHP_UPSTREAM_CONTAINER=${NGINX_PHP_UPSTREAM_CONTAINER}
+        - PHP_UPSTREAM_PORT=${NGINX_PHP_UPSTREAM_PORT}
+        - CHANGE_SOURCE=${CHANGE_SOURCE}
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+      - ${NGINX_HOST_LOG_PATH}:/var/log/nginx
+      - ${NGINX_SITES_PATH}:/etc/nginx/sites-available
+      - ${NGINX_SSL_PATH}:/etc/nginx/ssl
+    ports:
+      - "${NGINX_HOST_HTTP_PORT}:80"
+      - "${NGINX_HOST_HTTPS_PORT}:443"
+    depends_on:
+      - php-fpm
+    networks:
+      - frontend
+      - backend
+
+  ### PostgreSQL ###########################################
+  postgres:
+    build: ./postgres
+    volumes:
+      - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+      - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    networks:
+      - backend
+
+  ### Redis ################################################
+  redis:
+    build: ./redis
+    volumes:
+      - ${DATA_PATH_HOST}/redis:/data
+    ports:
+      - "${REDIS_PORT}:6379"
+    networks:
+      - backend
+
+  ### Redis Cluster ##########################################
+  redis-cluster:
+    build: ./redis-cluster
+    ports:
+      - "${REDIS_CLUSTER_PORT_RANGE}:7000-7005"
+    networks:
+      - backend
+
+  ### RabbitMQ #############################################
+  rabbitmq:
+    build: ./rabbitmq
+    ports:
+      - "${RABBITMQ_NODE_HOST_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_HTTP_HOST_PORT}:15672"
+      - "${RABBITMQ_MANAGEMENT_HTTPS_HOST_PORT}:15671"
+    privileged: true
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+    hostname: laradock-rabbitmq
+    volumes:
+      - ${DATA_PATH_HOST}/rabbitmq:/var/lib/rabbitmq
+    depends_on:
+      - php-fpm
+    networks:
+      - backend
+
+  ### Certbot #########################################
+  certbot:
+    build:
+      context: ./certbot
+    volumes:
+      - ./data/certbot/certs/:/var/certs
+      - ./certbot/letsencrypt/:/var/www/letsencrypt
+    environment:
+      - CN="fake.domain.com"
+      - EMAIL="fake.email@gmail.com"
+    networks:
+      - frontend
