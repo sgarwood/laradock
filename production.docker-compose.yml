@@ -25,6 +25,8 @@ services:
       "npm run start"
     networks:
       - frontend
+    environment:
+      - NODE_ENV=production
   ### PHP-FPM ##############################################
   php-fpm:
     build:
